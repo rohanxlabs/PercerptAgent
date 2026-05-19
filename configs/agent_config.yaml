@@ -1,0 +1,21 @@
+model:
+  name: "qwen/qwen3-32b"   # or mixtral-8x7b-32768, llama3-8b-8192
+  max_tokens: 1024
+  temperature: 0.3
+
+loop:
+  max_iterations: 10
+  frame_batch_size: 5
+  cooldown_frames: 15
+
+memory:
+  max_events: 20
+  summarize_after: 15
+
+tools:
+  enabled:
+    - log_event
+    - trigger_alert
+    - query_object_history
+    - annotate_frame
+    - send_command

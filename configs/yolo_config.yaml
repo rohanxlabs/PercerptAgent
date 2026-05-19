@@ -1,0 +1,19 @@
+classes:
+  filter: null
+  names_override: null
+model:
+  conf_threshold: 0.35
+  device: cpu
+  imgsz: 640
+  iou_threshold: 0.45
+  weights: yolov8n.pt
+stream:
+  max_fps: 30
+  resize_output:
+  - 1280
+  - 720
+  source: 0
+tracking:
+  enabled: true
+  persist: true
+  tracker: bytetrack.yaml

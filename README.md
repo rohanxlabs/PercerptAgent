@@ -2,6 +2,8 @@
 
 > Real-time YOLO perception + Groq-powered agentic decision loop
 
+<img width="1920" height="1020" alt="Screenshot 2026-05-19 170249" src="https://github.com/user-attachments/assets/3dff0156-318a-4bd3-abef-6e966dedf795" />
+
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)
 ![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-purple?style=flat-square)
 ![Groq](https://img.shields.io/badge/LLM-Groq-orange?style=flat-square)

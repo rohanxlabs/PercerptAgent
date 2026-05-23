@@ -1,7 +1,7 @@
-ultralytics
+ultralytics==8.1.0
 groq
 opencv-python-headless==4.9.0.80
 numpy1.26.4
 pyyaml
 Pillow
-supervision
+supervision==0.18.0

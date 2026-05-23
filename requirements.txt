@@ -1,7 +1,7 @@
 ultralytics
 groq
 opencv-python-headless==4.9.0.80
-numpy<2.0
+numpy1.26.4
 pyyaml
 Pillow
 supervision

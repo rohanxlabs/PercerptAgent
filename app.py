@@ -1,5 +1,6 @@
 import streamlit as st
 import cv2
+import groq
 import time
 import threading
 import numpy as np

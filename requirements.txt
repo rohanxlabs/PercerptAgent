@@ -1,4 +1,5 @@
 ultralytics
+streamlit
 groq
 opencv-python-headless
 numpy

@@ -1,6 +1,9 @@
 ultralytics
 groq
 opencv-python
+streamlit
+groq
+opencv-python-headless
 numpy
 pyyaml
 Pillow
@@ -8,3 +11,4 @@ supervision
 python-dotenv
 streamlit
 pytest
+

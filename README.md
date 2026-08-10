@@ -1,273 +1,100 @@
-# 👁 PerceptAgent
+# PerceptAgent
 
-> Real-time YOLO perception + Groq-powered agentic decision loop
+PerceptAgent turns live video into tracked scene context, then lets a Groq-backed agent choose validated tools whose results feed the next decision.
 
-<img width="1920" height="1020" alt="Screenshot 2026-05-19 170249" src="https://github.com/user-attachments/assets/3dff0156-318a-4bd3-abef-6e966dedf795" />
+## Problem
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)
-![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-purple?style=flat-square)
-![Groq](https://img.shields.io/badge/LLM-Groq-orange?style=flat-square)
-![Streamlit](https://img.shields.io/badge/UI-Streamlit-red?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+Object detection alone does not retain context or act. PerceptAgent provides a small, inspectable perception → memory → decision → tool → observation loop for video monitoring experiments.
 
-PerceptAgent detects and tracks objects in live video using YOLOv8, builds a structured scene representation, and feeds it to an LLM agent that reasons about the scene and executes tool-based actions — all inside a production-grade Streamlit dashboard.
+## Architecture
 
----
-
-## Pipeline
-
-```
-Camera / Video
+```text
+camera or video
       │
       ▼
-StreamHandler ──► YOLODetector ──► SceneState
-                        │               │
-                  Detects &        Tracks objects,
-                  tracks objects   logs ENTER/EXIT
-                                        │
-                                        ▼
-                                   AgentLoop (Groq LLM)
-                                        │
-                    ┌───────────────────┼───────────────────┐
-               log_event        trigger_alert          send_command
-               annotate_frame   query_object_history
+StreamHandler ──► YOLODetector + ByteTrack ──► SceneState
+                                                │
+                         scene events ─────────┤
+                                                ▼
+EpisodicMemory ◄── tool results ◄── AgentLoop (Groq, optional)
+                                      │
+                                      ▼
+                         ToolExecutor (validated JSON inputs)
+                                      │
+                                      ▼
+                    SimulatedActuator (explicitly simulation only)
 ```
 
----
+## What works
 
-## Features
-
-- **Real-time detection** — YOLOv8 with ByteTrack multi-object tracking
-- **Scene graph** — tracks object lifecycle, dwell time, ENTER/EXIT events
-- **Agentic loop** — ReAct-style LLM agent: reason → call tools → observe → repeat
-- **5 agent tools** — log events, trigger alerts, query history, annotate frames, send commands
-- **Episodic memory** — sliding window of past decisions for agent continuity
-- **Streamlit dashboard** — live feed, detections, agent decisions, alert panel, event log
-- **Robot-ready** — `send_command` tool hooks into ROS2, serial, or HTTP
-
----
-
-## Project Structure
-
-```
-perceptagent/
-├── perception/
-│   ├── detector.py          # YOLOv8 wrapper with ByteTrack
-│   ├── scene_state.py       # Scene graph & object lifecycle
-│   └── stream_handler.py    # Threaded video capture
-├── agent/
-│   ├── loop.py              # Groq ReAct agent loop
-│   ├── tools.py             # Tool schemas + executor
-│   ├── prompts.py           # System + context prompts
-│   └── memory.py            # Episodic memory
-├── configs/
-│   ├── agent_config.yaml    # Model, loop, memory params
-│   └── yolo_config.yaml     # YOLO model, tracking, stream
-├── utils/
-│   ├── visualizer.py        # OpenCV annotation helpers
-│   └── logger.py            # Structured logger
-├── tests/
-├── app.py                   # Streamlit dashboard
-├── main.py                  # Headless CLI runner
-└── requirements.txt
-```
-
----
+- YOLOv8 detection and ByteTrack IDs via Ultralytics.
+- A compact scene state with active tracked objects and ENTER/EXIT events.
+- A Groq function-calling loop that returns tool results to the model for another iteration.
+- Bounded in-process episodic memory of scene events, decisions, and tool results.
+- Five validated tools: `log_event`, `trigger_alert`, `query_object_history`, `annotate_frame`, and `send_command`.
+- `send_command` is a safe simulated action adapter. It does not control physical hardware.
 
 ## Installation
 
-**1. Clone**
+Python 3.10+ is required.
+
 ```bash
-git clone https://github.com/rohanxlabs/perceptagent
-cd perceptagent
+python -m venv .venv
+.venv\Scripts\activate       # Windows PowerShell/cmd equivalent is fine
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-**2. Install dependencies**
+Set `GROQ_API_KEY` in `.env` only if using the LLM agent. Never commit it. The offline demo below needs no key.
+
+## Run
+
+Use a camera or a video file:
+
 ```bash
-pip install ultralytics groq opencv-python numpy pyyaml streamlit
-```
-
-**3. Set Groq API key**
-```bash
-# Linux / macOS
-export GROQ_API_KEY="gsk_..."
-
-# Windows CMD
-set GROQ_API_KEY=gsk_...
-
-# Windows PowerShell
-$env:GROQ_API_KEY="gsk_..."
-```
-
-> Get a free key at [console.groq.com](https://console.groq.com)
-
----
-
-## Running
-
-**Streamlit dashboard**
-```bash
+python main.py --source path\to\video.mp4
+python main.py --source 0
 streamlit run app.py
-# Opens at http://localhost:8501
 ```
 
-Use the sidebar to select your video source, set confidence threshold, and click **▶ START**.
+The CLI/dashboard require a Groq key because they instantiate the LLM agent. If the key is unavailable, run the reproducible offline integration demo instead:
 
-**Headless CLI**
 ```bash
-python main.py                        # default webcam
-python main.py --source 1             # webcam index 1
-python main.py --source video.mp4     # video file
-python main.py --save output.mp4      # save annotated output
-python main.py --no-window            # headless
+python scripts/demo.py --source path\to\video.mp4 --frames 60 --output artifacts/demo.mp4
 ```
 
----
+It runs real detection/tracking from the supplied video, stores scene events in memory, executes a validated simulated pointing command for a newly tracked person, and prints the action/memory record. The generated annotated video is suitable for the perception screenshot; the printed JSON supplies the memory/action evidence. This is a deterministic policy fallback, not LLM reasoning.
+
+## LLM agent flow
+
+For every rate-gated batch, `AgentLoop` builds a prompt from `SceneState` and episodic memory. The model can request a tool using Groq function calling. Tool arguments are parsed and validated, the JSON result is appended as a tool message, and the agent can make another decision up to `max_iterations`. Invalid JSON, invalid arguments, tool failures, missing keys, model failures, unavailable input, and model-load/inference errors return explicit errors rather than fabricated success.
 
 ## Configuration
 
-**configs/yolo_config.yaml**
-```yaml
-model:
-  weights: "yolov8n.pt"    # yolov8n/s/m/l/x
-  device: "cpu"            # cpu | cuda | mps
-  conf_threshold: 0.35
-  iou_threshold: 0.45
-tracking:
-  enabled: true
-  tracker: "bytetrack.yaml"
-stream:
-  source: 0                # 0=webcam or path to video file
-  max_fps: 30
+- `configs/yolo_config.yaml`: model weights, thresholds, tracker, and default source.
+- `configs/agent_config.yaml`: model and loop/memory limits.
+- CLI and dashboard source/threshold choices are runtime overrides; they do not edit those files.
+
+## Project structure
+
+```text
+perception/  detection, tracking state, input stream
+agent/       LLM loop, prompts, memory, tools, simulated action adapter
+scripts/     reproducible offline demo
+tests/       unit and integration-path tests
 ```
 
-**configs/agent_config.yaml**
-```yaml
-model:
-  name: "llama-3.3-70b-versatile"
-  max_tokens: 1024
-  temperature: 0.3
-loop:
-  max_iterations: 10
-  frame_batch_size: 5      # frames between agent calls
-  cooldown_frames: 15      # skip frames after action taken
-memory:
-  max_events: 20
-```
+## Limitations
 
----
+- No physical robot, ROS2 bridge, persistence layer, API/backend, or deployment manifest is implemented.
+- Tracking quality and IDs depend on the selected model, tracker, video, and hardware.
+- The LLM loop requires a valid Groq account/key and network access.
+- The Streamlit UI has not been browser-tested in this repository environment.
 
-## Agent Tools
-
-| Tool | Purpose | Key Parameters |
-|---|---|---|
-| `log_event` | Log a notable scene event | severity, message, objects_involved |
-| `trigger_alert` | Fire a high-priority alert | alert_type, description, confidence |
-| `query_object_history` | Query dwell time and behavior | class_name |
-| `annotate_frame` | Request custom frame annotation | label, color, track_id |
-| `send_command` | Send command to external system | target, action, parameters |
-
-To connect `send_command` to your robot arm or ROS2 topic, edit `_tool_send_command` in `agent/tools.py`.
-
----
-
-## Groq Model Options
-
-| Model | Speed | Best For |
-|---|---|---|
-| `llama-3.3-70b-versatile` | Fast | Best reasoning — default |
-| `llama3-8b-8192` | Fastest | Low-latency, simpler scenes |
-| `mixtral-8x7b-32768` | Fast | Large context, complex history |
-
-Change model by editing `model.name` in `configs/agent_config.yaml`.
-
----
-
-## Customizing Agent Behavior
-
-Edit the system prompt in `agent/prompts.py`:
-
-```python
-# Security / surveillance
-"- Alert if more than 3 persons detected simultaneously"
-"- Alert if a person dwells for more than 10 seconds"
-
-# Robotics / manipulation
-"- Send robot_arm command when target object detected"
-"- Query object history before commanding a pick action"
-
-# Warehouse / counting
-"- Log event when item count changes"
-"- Alert if unknown object class appears on conveyor"
-```
-
----
-
-## Connecting to a Robot Arm
-
-Replace the stub in `agent/tools.py`:
-
-```python
-def _tool_send_command(self, target, action, parameters=None):
-    if target == "robot_arm":
-        # Option A: ROS2 topic
-        subprocess.run(["ros2", "topic", "pub", "/arm/cmd", ...])
-
-        # Option B: Serial (Feetech STS3215)
-        self.serial_port.write(build_servo_packet(action, parameters))
-
-        # Option C: HTTP to FastAPI
-        requests.post("http://localhost:8000/command", json={
-            "action": action, "params": parameters
-        })
-```
-
----
-
-## Running Tests
+## Verification
 
 ```bash
-pip install pytest
-pytest tests/ -v
+pytest tests -v
 ```
 
-Covers: Detection parsing, FrameResult summary, all 5 ToolExecutor tools, EpisodicMemory overflow and context.
-
----
-
-## Troubleshooting
-
-| Issue | Fix |
-|---|---|
-| Exits immediately | Check last log line — run with debug logging in main.py |
-| Cannot open source: 0 | Try source: 1 or 2 in yolo_config.yaml, or use a video file |
-| ModuleNotFoundError | Ensure `__init__.py` exists in perception/, agent/, utils/ |
-| GROQ_API_KEY not set | Export env variable — verify with `echo $GROQ_API_KEY` |
-| YOLO download fails | First run downloads weights (~6MB) — needs internet |
-| Streamlit blank feed | Click START in sidebar — feed only starts after button press |
-| Low FPS | Use yolov8n.pt, lower imgsz to 320, increase frame_batch_size |
-
----
-
-## Roadmap
-
-- [ ] ROS2 integration — publish detections as sensor_msgs
-- [ ] MoveIt2 bridge — agent triggers grasp/place via action servers
-- [ ] Zone definition — draw restricted zones in UI
-- [ ] Multi-camera support — aggregate scene state across feeds
-- [ ] ONNX export — run YOLO on-device (Jetson Nano, Raspberry Pi)
-- [ ] Voice alerts — TTS output for agent decisions
-
----
-
-## Author
-
-Built by **Rohan** · [github.com/rohanxlabs](https://github.com/rohanxlabs) · Pre-CSE AI/ML student building in public
-
-Stack: Python · YOLOv8 · Groq · Streamlit · ROS2 · MuJoCo · Anthropic SDK
-
----
-
-## License
-
-MIT License — free to use, modify, and distribute. Attribution appreciated.
+Tests cover detector result objects, scene → memory → tool → simulated action flow, memory bounds, and tool input rejection. A live YOLO inference test requires dependencies plus a supplied video/image and is performed with the demo command above.

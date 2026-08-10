@@ -12,11 +12,11 @@ class StreamHandler:
     Runs capture in a background thread; main thread pulls from queue.
     """
 
-    def __init__(self, config_path: str = "configs/yolo_config.yaml"):
+    def __init__(self, config_path: str = "configs/yolo_config.yaml", source=None):
         with open(config_path) as f:
             cfg = yaml.safe_load(f)["stream"]
 
-        self.source = cfg["source"]
+        self.source = cfg["source"] if source is None else source
         self.max_fps = cfg["max_fps"]
         self.resize = tuple(cfg.get("resize_output", []))
 
@@ -24,12 +24,14 @@ class StreamHandler:
         self._queue: Queue = Queue(maxsize=4)
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._finished = threading.Event()
 
     def start(self):
         self._cap = cv2.VideoCapture(self.source)
         if not self._cap.isOpened():
             raise RuntimeError(f"Cannot open source: {self.source}")
         self._stop_event.clear()
+        self._finished.clear()
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
 
@@ -54,12 +56,15 @@ class StreamHandler:
             elapsed = time.time() - t0
             if elapsed < interval:
                 time.sleep(interval - elapsed)
+        self._finished.set()
 
     def read(self, timeout: float = 1.0) -> Optional[tuple]:
         """Returns (frame, timestamp) or None if no frame available."""
         try:
             return self._queue.get(timeout=timeout)
         except Empty:
+            if self._finished.is_set():
+                return None
             return None
 
     def __iter__(self):

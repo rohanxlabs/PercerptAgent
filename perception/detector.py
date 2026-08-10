@@ -47,16 +47,23 @@ class FrameResult:
 
 
 class YOLODetector:
-    def __init__(self, config_path: str = "configs/yolo_config.yaml"):
+    def __init__(self, config_path: str = "configs/yolo_config.yaml", config: dict | None = None):
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
+        if config:
+            for section, values in config.items():
+                if isinstance(values, dict) and isinstance(cfg.get(section), dict):
+                    cfg[section].update(values)
 
         self.model_cfg = cfg["model"]
         self.track_cfg = cfg["tracking"]
         self.class_filter = cfg["classes"].get("filter")
 
-        self.model = YOLO(self.model_cfg["weights"])
-        self.model.to(self.model_cfg["device"])
+        try:
+            self.model = YOLO(self.model_cfg["weights"])
+            self.model.to(self.model_cfg["device"])
+        except Exception as exc:
+            raise RuntimeError(f"Unable to load YOLO weights '{self.model_cfg['weights']}': {exc}") from exc
 
         self._frame_id = 0
         self._class_names = self.model.names  # {0: 'person', 1: 'bicycle', ...}
@@ -74,14 +81,17 @@ class YOLODetector:
             classes=self.class_filter,
         )
 
-        if self.track_cfg["enabled"]:
-            results = self.model.track(
-                persist=self.track_cfg["persist"],
-                tracker=self.track_cfg["tracker"],
-                **kwargs,
-            )
-        else:
-            results = self.model(**kwargs)
+        try:
+            if self.track_cfg["enabled"]:
+                results = self.model.track(
+                    persist=self.track_cfg["persist"],
+                    tracker=self.track_cfg["tracker"],
+                    **kwargs,
+                )
+            else:
+                results = self.model(**kwargs)
+        except Exception as exc:
+            raise RuntimeError(f"YOLO inference failed on frame {self._frame_id}: {exc}") from exc
 
         detections = self._parse_results(results[0])
         return FrameResult(

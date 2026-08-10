@@ -19,8 +19,8 @@ class TrackedObject:
     def duration(self) -> float:
         return self.last_seen - self.first_seen
 
-    def update(self, det: Detection):
-        self.last_seen = time.time()
+    def update(self, det: Detection, seen_at: float):
+        self.last_seen = seen_at
         self.detection_count += 1
         self.bbox_history.append(det.bbox_xyxy)
         self.confidence_avg = (
@@ -51,11 +51,14 @@ class SceneState:
         self._tracked: dict[int, TrackedObject] = {}
         self._class_history: dict[str, list[float]] = defaultdict(list)
         self._events: deque = deque(maxlen=100)
+        self._pending_events: deque = deque(maxlen=100)
         self._frame_count = 0
 
     def update(self, frame_result: FrameResult):
         self._frame_count += 1
-        now = time.time()
+        # Use the capture timestamp when available so video-file playback and tests
+        # have deterministic dwell times.
+        now = frame_result.timestamp if frame_result.timestamp > 0 else time.time()
         seen_ids = set()
 
         for det in frame_result.detections:
@@ -74,7 +77,7 @@ class SceneState:
                 self._tracked[tid] = obj
                 self._log_event("ENTER", det.class_name, tid, frame_result.frame_id)
             else:
-                self._tracked[tid].update(det)
+                self._tracked[tid].update(det, now)
 
             self._class_history[det.class_name].append(now)
 
@@ -89,13 +92,15 @@ class SceneState:
             self._log_event("EXIT", obj.class_name, tid, frame_result.frame_id)
 
     def _log_event(self, event_type: str, class_name: str, track_id: int, frame_id: int):
-        self._events.append({
+        event = {
             "event": event_type,
             "class": class_name,
             "track_id": track_id,
             "frame_id": frame_id,
             "timestamp": time.time(),
-        })
+        }
+        self._events.append(event)
+        self._pending_events.append(event)
 
     def get_snapshot(self) -> dict:
         """Compact scene description for the agent."""
@@ -110,6 +115,12 @@ class SceneState:
             "class_counts": dict(class_counts),
             "recent_events": list(self._events)[-10:],
         }
+
+    def consume_events(self) -> list[dict]:
+        """Return scene events not yet sent to downstream consumers."""
+        events = list(self._pending_events)
+        self._pending_events.clear()
+        return events
 
     def get_object_history(self, class_name: str) -> list[dict]:
         return [

@@ -34,7 +34,8 @@ def test_tool_executor_send_command():
         "action": "point_to_object",
         "parameters": {"track_id": 3}
     }))
-    assert result["status"] == "command_sent"
+    assert result["status"] == "simulated_action_completed"
+    assert result["action"]["mode"] == "simulation"
 
 
 def test_episodic_memory():

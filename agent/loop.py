@@ -1,6 +1,7 @@
 import json
 import yaml
 import time
+import os
 from groq import Groq
 from agent.tools import TOOL_SCHEMAS, ToolExecutor
 from agent.prompts import SYSTEM_PROMPT, build_user_prompt
@@ -16,6 +17,7 @@ class AgentLoop:
         self,
         config_path: str = "configs/agent_config.yaml",
         scene_state: SceneState = None,
+        client=None,
     ):
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
@@ -23,7 +25,9 @@ class AgentLoop:
         self.model_cfg = cfg["model"]
         self.loop_cfg = cfg["loop"]
 
-        self.client = Groq()  # reads GROQ_API_KEY from env
+        if client is None and not os.getenv("GROQ_API_KEY"):
+            raise RuntimeError("GROQ_API_KEY is not configured. Copy .env.example to .env and set it.")
+        self.client = client or Groq()  # reads GROQ_API_KEY from env
         self.scene_state = scene_state
         self.executor = ToolExecutor(scene_state=scene_state)
         self.memory = EpisodicMemory(
@@ -45,6 +49,8 @@ class AgentLoop:
     def run(self) -> dict:
         self._batch_id += 1
         scene = self.scene_state.get_snapshot()
+        for event in self.scene_state.consume_events():
+            self.memory.add_scene_event(event)
         memory_ctx = self.memory.get_context()
         user_msg = build_user_prompt(scene, memory_ctx, self._batch_id)
 
@@ -67,20 +73,24 @@ class AgentLoop:
         ]
 
         tool_calls_made = []
+        tool_results = []
         decision_text = ""
         iterations = 0
 
         while iterations < self.loop_cfg["max_iterations"]:
             iterations += 1
 
-            response = self.client.chat.completions.create(
-                model=self.model_cfg["name"],
-                max_tokens=self.model_cfg["max_tokens"],
-                temperature=self.model_cfg["temperature"],
-                tools=groq_tools,
-                tool_choice="auto",
-                messages=messages,
-            )
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_cfg["name"],
+                    max_tokens=self.model_cfg["max_tokens"],
+                    temperature=self.model_cfg["temperature"],
+                    tools=groq_tools,
+                    tool_choice="auto",
+                    messages=messages,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"LLM request failed on agent batch {self._batch_id}: {exc}") from exc
 
             msg = response.choices[0].message
             messages.append(msg)  # append assistant message
@@ -96,11 +106,18 @@ class AgentLoop:
             # Execute each tool call
             for tc in msg.tool_calls:
                 tool_name = tc.function.name
-                tool_input = json.loads(tc.function.arguments)
+                try:
+                    tool_input = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    tool_input = {}
+                    result_str = json.dumps({"error": "LLM returned invalid JSON tool arguments"})
+                else:
+                    result_str = self.executor.execute(tool_name, tool_input)
 
                 logger.debug(f"Tool call: {tool_name}({tool_input})")
-                result_str = self.executor.execute(tool_name, tool_input)
                 tool_calls_made.append({"tool": tool_name, "input": tool_input})
+                tool_results.append({"tool": tool_name, "result": json.loads(result_str)})
+                self.memory.add_tool_result(tool_name, result_str)
 
                 messages.append({
                     "role": "tool",
@@ -118,6 +135,7 @@ class AgentLoop:
             "batch_id": self._batch_id,
             "iterations": iterations,
             "tool_calls": tool_calls_made,
+            "tool_results": tool_results,
             "decision": decision_text,
             "alerts": self.executor._alerts[-3:],
             "annotations": self.executor._annotations,

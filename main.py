@@ -13,9 +13,9 @@ logger = get_logger("main")
 from dotenv import load_dotenv
 load_dotenv()
 
-def run(show_window: bool = True, save_output: str = None):
+def run(show_window: bool = True, save_output: str = None, source=None):
     logger.info("Initializing StreamHandler...")
-    stream = StreamHandler()
+    stream = StreamHandler(source=source)
 
     logger.info("Initializing YOLODetector...")
     detector = YOLODetector()
@@ -102,17 +102,12 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=str, default=None, help="Override video source (0,1,2 or path)")
     args = parser.parse_args()
 
-    # Override source from CLI if provided
-    if args.source is not None:
-        import yaml
-        with open("configs/yolo_config.yaml") as f:
-            cfg = yaml.safe_load(f)
+    source = args.source
+    if source is not None:
         try:
-            cfg["stream"]["source"] = int(args.source)
+            source = int(source)
         except ValueError:
-            cfg["stream"]["source"] = args.source
-        with open("configs/yolo_config.yaml", "w") as f:
-            yaml.dump(cfg, f)
-        logger.info(f"Source overridden to: {args.source}")
+            pass
+        logger.info(f"Source overridden to: {source}")
 
-    run(show_window=not args.no_window, save_output=args.save)
+    run(show_window=not args.no_window, save_output=args.save, source=source)

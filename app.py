@@ -270,19 +270,8 @@ class PipelineThread(threading.Thread):
     def run(self):
         import yaml
 
-        # Patch configs at runtime
-        with open("configs/yolo_config.yaml") as f:
-            ycfg = yaml.safe_load(f)
-        try:
-            ycfg["stream"]["source"] = int(self.source)
-        except (ValueError, TypeError):
-            ycfg["stream"]["source"] = self.source
-        ycfg["model"]["conf_threshold"] = self.conf_threshold
-        with open("configs/yolo_config.yaml", "w") as f:
-            yaml.dump(ycfg, f)
-
-        stream = StreamHandler()
-        detector = YOLODetector()
+        stream = StreamHandler(source=self.source)
+        detector = YOLODetector(config={"model": {"conf_threshold": self.conf_threshold}})
         scene = SceneState(stale_timeout=3.0)
         agent = AgentLoop(scene_state=scene)
 

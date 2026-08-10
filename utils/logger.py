@@ -1,6 +1,11 @@
 import logging
 import sys
 
+# Windows consoles commonly default to cp1252; use UTF-8 so structured logs with
+# non-ASCII labels cannot fail while handling an otherwise successful action.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)

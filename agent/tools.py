@@ -1,5 +1,6 @@
 import json
 import time
+from agent.action import SimulatedActuator
 from utils.logger import get_logger
 
 logger = get_logger("tools")
@@ -83,14 +84,18 @@ TOOL_SCHEMAS = [
 # ── Tool executor ──────────────────────────────────────────────────────────────
 
 class ToolExecutor:
-    def __init__(self, scene_state=None):
+    def __init__(self, scene_state=None, actuator=None):
         self.scene_state = scene_state
         self._event_log: list[dict] = []
         self._alerts: list[dict] = []
         self._annotations: list[dict] = []
         self._commands: list[dict] = []
+        self.actuator = actuator or SimulatedActuator()
 
     def execute(self, tool_name: str, tool_input: dict) -> str:
+        validation_error = self._validate(tool_name, tool_input)
+        if validation_error:
+            return json.dumps({"error": validation_error})
         handler = getattr(self, f"_tool_{tool_name}", None)
         if handler is None:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -100,6 +105,37 @@ class ToolExecutor:
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}")
             return json.dumps({"error": str(e)})
+
+    @staticmethod
+    def _validate(tool_name: str, tool_input: dict) -> str | None:
+        schema = next((item["input_schema"] for item in TOOL_SCHEMAS if item["name"] == tool_name), None)
+        if schema is None:
+            return f"Unknown tool: {tool_name}"
+        if not isinstance(tool_input, dict):
+            return "Tool input must be a JSON object"
+        missing = [key for key in schema.get("required", []) if key not in tool_input]
+        if missing:
+            return f"Missing required argument(s): {', '.join(missing)}"
+        for name, value in tool_input.items():
+            prop = schema["properties"].get(name)
+            if prop is None:
+                return f"Unexpected argument: {name}"
+            expected = prop.get("type")
+            if expected == "string" and not isinstance(value, str):
+                return f"{name} must be a string"
+            if expected == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+                return f"{name} must be a number"
+            if expected == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+                return f"{name} must be an integer"
+            if expected == "array" and not isinstance(value, list):
+                return f"{name} must be an array"
+            if expected == "object" and not isinstance(value, dict):
+                return f"{name} must be an object"
+            if "enum" in prop and value not in prop["enum"]:
+                return f"{name} must be one of: {', '.join(prop['enum'])}"
+        if tool_name == "trigger_alert" and not 0 <= tool_input["confidence"] <= 1:
+            return "confidence must be between 0 and 1"
+        return None
 
     def _tool_log_event(self, severity: str, message: str, objects_involved: list = None) -> dict:
         entry = {
@@ -143,4 +179,4 @@ class ToolExecutor:
         self._commands.append(cmd)
         logger.info(f"COMMAND → {target}: {action} params={parameters}")
         # Hook: replace with actual robot/relay interface
-        return {"status": "command_sent", "command": cmd}
+        return self.actuator.execute(target, action, cmd["parameters"])
